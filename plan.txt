@@ -1,0 +1,3 @@
+1.) Base programmer: Normal serial mode to 9600 baud rate.
+2.) Configurator: Turn off echo, set SSID, PSK and other modes.
+3.) User library: communicate via TCP. Simple HTTP or not.
