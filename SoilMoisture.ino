@@ -1,17 +1,9 @@
 
-#include <LiquidCrystal.h>
+#include <SerialESP8266wifi.h>
+#include <SoftwareSerial.h>
 
+#include "credentials/wifi.h"
 
-const char* moistureStrings[] = {
-  "High",
-  "Norm",
-  "Low"
-};
-
-const char* wateringStrings[] = {
-  "ON",
-  "OFF"
-};
 
 /*
  * Constant / configuration.
@@ -24,14 +16,15 @@ const int sleepSwitchPin = 2;
 const int motorInterval = 200;
 const int motorBreakInterval = 800;
 
-const int sleepIntervalSeconds = 3600; 
+const int sleepIntervalSeconds = 11; 
 const int warmupIntervalSeconds = 10;
 
-LiquidCrystal lcd(12, 11, 6, 5, 4, 3);
+SoftwareSerial wifiSerial(7, 8);
 
 /* 
  *  Moisture state
  */
+
 
 int moistureSensorValue = 0; 
 
@@ -56,6 +49,11 @@ typedef struct {
 } State;
 
 State state;
+unsigned long last_display_time = 0;
+
+/*
+ *
+ */
 
 /*
  * Read sensors and decide on the moisture state.
@@ -95,6 +93,7 @@ void updateWatering(State &state) {
  * Do watering if necessary.
  */
 void maybePerformWatering(const WateringState &watering) {
+  Serial.print("Sri\n");
   switch (watering)  {
       case Watering:
         digitalWrite(motorPin, HIGH);
@@ -106,7 +105,7 @@ void maybePerformWatering(const WateringState &watering) {
         digitalWrite(motorPin, LOW);
         break;
       default:
-        Serial.print("ERROR: unknown watering state. This should never happen!!!\n");
+        // Serial.print("ERROR: unknown watering state. This should never happen!!!\n");
         break;
   }
 }
@@ -135,42 +134,22 @@ void maybeWaitForNextPeriod(const WateringState &watering) {
       // If we are watering, we should not wait.
       break;
     default:
-      Serial.print("ERROR: unknown watering state. This should never happen!!!\n");
+      // Serial.print("ERROR: unknown watering state. This should never happen!!!\n");
       break;
   }
 }
 
-/*
- * Update LCD screen: dump the State, show phase and how long will it take to switch it.
- */
-char msg[17] = "";
-void updateLCD(const State &state, const char* phase, const int howLong) {
-  snprintf(
-    msg,
-    sizeof(msg),
-    "%s (%d) [%s]                ", 
-    moistureStrings[state.moisture],
-    moistureSensorValue, 
-    wateringStrings[state.watering]
-  );
-  lcd.setCursor(0, 0);lcd.print(msg);
-  snprintf(
-    msg,
-    sizeof(msg),
-    "%s %ds.               ",
-    phase,
-    howLong
-  );
-  lcd.setCursor(0, 1);lcd.print(msg);
-}
-
 void setup() {
+  // Start debugging serial mode.
+  Serial.begin(9600);
   state.moisture = HighMoisture;
   state.watering = NotWatering;
-  lcd.begin(16, 2);
   pinMode(motorPin, OUTPUT);
   pinMode(moistureSensorPin, INPUT);
   pinMode(sleepSwitchPin, OUTPUT);
+
+  // Initialize connection to serial wifi.
+  wifiSerial.begin(9600);
 }
 
 
@@ -178,7 +157,6 @@ void loop() {
   maybeWaitForNextPeriod(state.watering);
   updateMoisture(state.moisture);
   updateWatering(state);
-  updateLCD(state, "Measuring", 0);
   maybePerformWatering(state.watering);
 }
 
@@ -190,7 +168,6 @@ void switchSensors(int output) {
 
 void longDelayInSeconds(int seconds, const char *msg) {
   for(int i=seconds ; i > 0; i--) {
-    updateLCD(state, msg, i);
     delay(1000);
   }
 }
