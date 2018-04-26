@@ -2,8 +2,6 @@
 #include <SerialESP8266wifi.h>
 #include <SoftwareSerial.h>
 
-#include "credentials/wifi.h"
-
 
 /*
  * Constant / configuration.
