@@ -5,15 +5,27 @@
 
 
 class Sensor {
+  public:
+  enum SensorType {
+    Digital = 0,
+    Analog = 1,
+  };
+
+  private:
   const int sensorPin;
   const char* serialName;
 
   int sensorValue;
+  bool serializable;
+  SensorType type;
 
   public:
-  Sensor(int pin, const char* serialName):
+
+  Sensor(int pin, SensorType type, const char* serialName, bool serializable):
     sensorPin(pin),
     serialName(serialName),
+    type(type),
+    serializable(serializable),
     sensorValue(0)
   {}
 
@@ -22,7 +34,11 @@ class Sensor {
   }
 
   int update() {
-    this->sensorValue = analogRead(this->sensorPin);
+    if (this->type == Digital) {
+      this->sensorValue = digitalRead(this->sensorPin);
+    } else {
+      this->sensorValue = analogRead(this->sensorPin);
+    }
     return this->sensorValue;
   }
 
@@ -32,6 +48,10 @@ class Sensor {
 
   String serialize() {
     return String(this->serialName) + String(this->sensorValue);
+  }
+
+  bool shouldSerialize() {
+    return serializable;
   }
 };
 
@@ -60,20 +80,27 @@ class PlantPot {
 
   const char identifier[] = "First configuration";
 
-  Sensor sensors[1] = {
-    Sensor(A0, "m")
+  Sensor sensors[2] = {
+    Sensor(A0, Sensor::Analog, "m", true),
+    // This is weird, because there is likely to be only 1 in every pot. But
+    // Let's keep it simple for now.
+    Sensor(5, Sensor::Digital, "?", true),
   };
 
   public:
 
   enum Sensors {
     MoistureSensor = 0,
+    WateringButton = 1,
   };
 
   String serialize() {
     String ret = "";
     bool first = true;
     for(auto &s: this->sensors) {
+      if (!s.shouldSerialize()) {
+        continue;
+      }
       if (first) {
         first = false;
       } else {
@@ -168,9 +195,9 @@ unsigned long last_display_time = 0;
  */
 void updateMoisture(MoistureState &moisture) {
   auto moistureSensorValue = plantPot.getValue(PlantPot::MoistureSensor);
-  if (moistureSensorValue >= 450) {
+  if (moistureSensorValue >= 650) {
     moisture = LowMoisture;
-  } else if (moistureSensorValue >= 350) {
+  } else if (moistureSensorValue >= 450) {
     moisture = NormalMoisture;
   } else {
     moisture = HighMoisture;
@@ -181,7 +208,7 @@ void updateMoisture(MoistureState &moisture) {
  * Decide whether to water this cycle or not.
  */
 void updateWatering(State &state) {
-  auto manualWatering = digitalRead(10);// TODO: watering button
+  auto manualWatering = plantPot.getValue(PlantPot::WateringButton);
   if (manualWatering) {
     state.watering.wateringState = Watering;
     state.watering.wateringCount += 1;
