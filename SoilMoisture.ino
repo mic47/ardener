@@ -249,7 +249,6 @@ void updateWatering(const PlantPot &pot, State &state) {
  * Do watering if necessary.
  */
 void maybePerformWatering(const WateringState &watering) {
-  Serial.print("Sri\n");
   switch (watering.wateringState)  {
       case Watering:
         digitalWrite(motorPin, HIGH);
@@ -276,14 +275,12 @@ void maybeWaitForNextPeriod(const WateringState &watering) {
     case NotWatering:
       // Turn off sensitive sensors.
       if (canSleep) {
-        Serial.println("Sleeping");
         switchSensors(LOW);
         longDelayInSeconds(sleepIntervalSeconds, "sleeping");
       } else {
         canSleep = true;
       }
       // Turn them on, and wait until they initialize properly.
-      Serial.println("WarmingUp");
       switchSensors(HIGH);
       longDelayInSeconds(warmupIntervalSeconds, "warmup");
       // Now the sensor readings are good, we can proceed.
@@ -309,7 +306,6 @@ void setup() {
 
   wifiSerial.begin(9600);
   // Initialize connection to serial wifi.
-  Serial.println("Initializing wifi");
   if(wifi.begin()) {
     Serial.println("Wifi is initialized");
   } else {
