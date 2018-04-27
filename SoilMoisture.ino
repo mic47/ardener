@@ -144,9 +144,15 @@ enum WateringStateEnum {
   NotWatering = 1,
 };
 
+enum WateringSourceEnum {
+  AutomatedWatering = 0,
+  ManualWatering = 1,
+};
+
 struct WateringState {
   int wateringCount;
   WateringStateEnum wateringState;
+  WateringSourceEnum wateringSource;
 };
 
 typedef struct {
@@ -175,24 +181,40 @@ void updateMoisture(MoistureState &moisture) {
  * Decide whether to water this cycle or not.
  */
 void updateWatering(State &state) {
-  switch (state.moisture) {
-    case LowMoisture:
-      state.watering.wateringState = Watering;
-      state.watering.wateringCount += 1;
-      break;
-    case HighMoisture:
-      state.watering.wateringState = NotWatering;
-      state.watering.wateringCount = 0;
-      break;
-    case NormalMoisture:
-      if (state.watering.wateringState == Watering) {
+  auto manualWatering = digitalRead(10);// TODO: watering button
+  if (manualWatering) {
+    state.watering.wateringState = Watering;
+    state.watering.wateringCount += 1;
+    state.watering.wateringSource = ManualWatering;
+  } else {
+    switch (state.moisture) {
+      case LowMoisture:
+        state.watering.wateringState = Watering;
+        state.watering.wateringSource = AutomatedWatering;
         state.watering.wateringCount += 1;
-      }
-      // Keep state as it is.
-      break;
-    default:
-      Serial.print("ERROR: moisture state is in unknown level!!!\n");
-      break;
+        break;
+      case HighMoisture:
+        state.watering.wateringState = NotWatering;
+        state.watering.wateringCount = 0;
+        state.watering.wateringSource = AutomatedWatering;
+        break;
+      case NormalMoisture:
+        if (
+          state.watering.wateringState == Watering
+          && state.watering.wateringSource != ManualWatering
+        ) {
+          state.watering.wateringCount += 1;
+        } else {
+          state.watering.wateringState = NotWatering;
+          state.watering.wateringCount = 0;
+          state.watering.wateringSource = AutomatedWatering;
+        }
+        // Keep state as it is.
+        break;
+      default:
+        Serial.print("ERROR: moisture state is in unknown level!!!\n");
+        break;
+    }
   }
 }
 
@@ -285,14 +307,14 @@ void loop() {
 
 void stateChangeHooks(const State &prev, const State &cur, const PlantPot &pot) {
   if (
-    prev.watering.wateringState == Watering 
+    prev.watering.wateringState == Watering
     && cur.watering.wateringState == NotWatering
   ) {
-      sendWateringAction(pot, prev.watering.wateringCount);
+      sendWateringAction(pot, prev.watering);
   }
 }
 
-void sendWateringAction(const PlantPot &pot, const int &wateringCount) {
+void sendWateringAction(const PlantPot &pot, WateringState watering) {
   bool ok = wifi.connectToServer("192.168.0.47", 2347);
   if (!ok) {
     Serial.println("ActionSend: Connecting to server failed.");
@@ -306,7 +328,13 @@ void sendWateringAction(const PlantPot &pot, const int &wateringCount) {
     return;
   }
   char buf[32];
-  sprintf(buf, "a AutomatedWatering %d", wateringCount);
+  sprintf(
+    buf, "a %s %d",
+    watering.wateringSource == AutomatedWatering
+      ? "AutomatedWatering"
+      : "ManualWatering",
+    watering.wateringCount
+  );
   ok = wifi.send(SERVER, buf, true);
   wifi.disconnectFromServer();
 }
