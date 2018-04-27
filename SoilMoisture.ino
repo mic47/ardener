@@ -183,7 +183,6 @@ struct WateringState {
 };
 
 typedef struct {
-  MoistureState moisture;
   WateringState watering;
 } State;
 
@@ -191,16 +190,16 @@ State state;
 unsigned long last_display_time = 0;
 
 /*
- * Read sensors and decide on the moisture state.
+ * Decide on moisture state.
  */
-void updateMoisture(const PlantPot &pot, MoistureState &moisture) {
+MoistureState classifyMoisture(const PlantPot &pot) {
   auto moistureSensorValue = pot.getValue(PlantPot::MoistureSensor);
   if (moistureSensorValue >= 650) {
-    moisture = LowMoisture;
+    return LowMoisture;
   } else if (moistureSensorValue >= 450) {
-    moisture = NormalMoisture;
+    return NormalMoisture;
   } else {
-    moisture = HighMoisture;
+    return HighMoisture;
   }
 }
 
@@ -209,12 +208,13 @@ void updateMoisture(const PlantPot &pot, MoistureState &moisture) {
  */
 void updateWatering(const PlantPot &pot, State &state) {
   auto manualWatering = pot.getValue(PlantPot::WateringButton);
+  auto moisture = classifyMoisture(pot);
   if (manualWatering) {
     state.watering.wateringState = Watering;
     state.watering.wateringCount += 1;
     state.watering.wateringSource = ManualWatering;
   } else {
-    switch (state.moisture) {
+    switch (moisture) {
       case LowMoisture:
         state.watering.wateringState = Watering;
         state.watering.wateringSource = AutomatedWatering;
@@ -300,7 +300,6 @@ void maybeWaitForNextPeriod(const WateringState &watering) {
 void setup() {
   // Start debugging serial mode.
   Serial.begin(9600);
-  state.moisture = HighMoisture;
   state.watering.wateringState = NotWatering;
   state.watering.wateringCount = 0;
   pinMode(motorPin, OUTPUT);
@@ -323,7 +322,6 @@ void loop() {
   maybeWaitForNextPeriod(state.watering);
   plantPot.update();
   State previousState = state;
-  updateMoisture(plantPot, state.moisture);
   updateWatering(plantPot, state);
 
   stateChangeHooks(previousState, state, plantPot);
