@@ -139,9 +139,14 @@ enum MoistureState {
  * Watering state
  */
 
-enum WateringState {
+enum WateringStateEnum {
   Watering = 0,
   NotWatering = 1,
+};
+
+struct WateringState {
+  int wateringCount;
+  WateringStateEnum wateringState;
 };
 
 typedef struct {
@@ -172,12 +177,17 @@ void updateMoisture(MoistureState &moisture) {
 void updateWatering(State &state) {
   switch (state.moisture) {
     case LowMoisture:
-      state.watering = Watering;
+      state.watering.wateringState = Watering;
+      state.watering.wateringCount += 1;
       break;
     case HighMoisture:
-      state.watering = NotWatering;
+      state.watering.wateringState = NotWatering;
+      state.watering.wateringCount = 0;
       break;
     case NormalMoisture:
+      if (state.watering.wateringState == Watering) {
+        state.watering.wateringCount += 1;
+      }
       // Keep state as it is.
       break;
     default:
@@ -191,7 +201,7 @@ void updateWatering(State &state) {
  */
 void maybePerformWatering(const WateringState &watering) {
   Serial.print("Sri\n");
-  switch (watering)  {
+  switch (watering.wateringState)  {
       case Watering:
         digitalWrite(motorPin, HIGH);
         delay(motorInterval);
@@ -213,16 +223,18 @@ void maybePerformWatering(const WateringState &watering) {
  */
 bool canSleep = false;
 void maybeWaitForNextPeriod(const WateringState &watering) {
-  switch (watering) {
+  switch (watering.wateringState) {
     case NotWatering:
       // Turn off sensitive sensors.
       if (canSleep) {
+        Serial.println("Sleeping");
         switchSensors(LOW);
         longDelayInSeconds(sleepIntervalSeconds, "sleeping");
       } else {
         canSleep = true;
       }
       // Turn them on, and wait until they initialize properly.
+      Serial.println("WarmingUp");
       switchSensors(HIGH);
       longDelayInSeconds(warmupIntervalSeconds, "warmup");
       // Now the sensor readings are good, we can proceed.  
@@ -240,7 +252,8 @@ void setup() {
   // Start debugging serial mode.
   Serial.begin(9600);
   state.moisture = HighMoisture;
-  state.watering = NotWatering;
+  state.watering.wateringState = NotWatering;
+  state.watering.wateringCount = 0;
   pinMode(motorPin, OUTPUT);
   pinMode(sleepSwitchPin, OUTPUT);
 
@@ -260,10 +273,42 @@ void setup() {
 void loop() {
   maybeWaitForNextPeriod(state.watering);
   plantPot.update();
+  State previousState = state;
   updateMoisture(state.moisture);
   updateWatering(state);
+  
+  stateChangeHooks(previousState, state, plantPot);
+
   maybePerformWatering(state.watering);
   sendMeasurements(plantPot);
+}
+
+void stateChangeHooks(const State &prev, const State &cur, const PlantPot &pot) {
+  if (
+    prev.watering.wateringState == Watering 
+    && cur.watering.wateringState == NotWatering
+  ) {
+      sendWateringAction(pot, prev.watering.wateringCount);
+  }
+}
+
+void sendWateringAction(const PlantPot &pot, const int &wateringCount) {
+  bool ok = wifi.connectToServer("192.168.0.47", 2347);
+  if (!ok) {
+    Serial.println("ActionSend: Connecting to server failed.");
+    return;
+  }
+
+  ok = wifi.send(SERVER, "i ", false);
+  ok &= wifi.send(SERVER, pot.getIdentifier(), true);
+  if (!ok) {
+    Serial.println("ActionSend: Identifier message failed to send.");
+    return;
+  }
+  char buf[32];
+  sprintf(buf, "a AutomatedWatering %d", wateringCount);
+  ok = wifi.send(SERVER, buf, true);
+  wifi.disconnectFromServer();
 }
 
 bool sendMeasurements(PlantPot &pot) {
