@@ -121,7 +121,8 @@ const int motorBreakInterval = 800;
 const int sleepIntervalSeconds = 11; 
 const int warmupIntervalSeconds = 10;
 
-SoftwareSerial wifiSerial(7, 8);
+SoftwareSerial wifiSerial(3, 4);
+SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, -1, Serial);
 
 /* 
  *  Moisture state
@@ -245,8 +246,14 @@ void setup() {
 
   plantPot.init();
 
-  // Initialize connection to serial wifi.
   wifiSerial.begin(9600);
+  // Initialize connection to serial wifi.
+  Serial.println("Initializing wifi");
+  if(wifi.begin()) {
+    Serial.println("Wifi is initialized");
+  } else {
+    Serial.println("Wifi failed to initialize");
+  }
 }
 
 
@@ -256,6 +263,31 @@ void loop() {
   updateMoisture(state.moisture);
   updateWatering(state);
   maybePerformWatering(state.watering);
+  sendMeasurements(plantPot);
+}
+
+bool sendMeasurements(PlantPot &pot) {
+  bool ok = wifi.connectToServer("192.168.0.47", "2347");
+  if (!ok) {
+    Serial.println("Connecting to server failed.");
+    return;
+  }
+
+  ok = wifi.send(SERVER, "i ", false);
+  ok &= wifi.send(SERVER, pot.getIdentifier(), true);
+  if (!ok) {
+    Serial.println("Identifier message failed to send.");
+    return false;
+  }
+  ok = wifi.send(SERVER, "m ", false);
+  ok &= wifi.send(SERVER, pot.serialize().c_str(), true);
+  //ok &= wifi.send(SERVER, "\n", true);
+  if (!ok) {
+    Serial.println("Measurement message failed to be sent.");
+    return false;
+  }
+  wifi.disconnectFromServer();
+  return true;
 }
 
 // Tools
