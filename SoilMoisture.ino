@@ -1,16 +1,17 @@
 
+// Using forked version of ESP library: https://github.com/mic47/ESP8266wifi
 #include <SerialESP8266wifi.h>
 #include <SoftwareSerial.h>
 
 
 class Sensor {
   const int sensorPin;
-  const char serialName;
+  const char* serialName;
 
   int sensorValue;
 
   public:
-  Sensor(int pin, char serialName):
+  Sensor(int pin, const char* serialName):
     sensorPin(pin),
     serialName(serialName),
     sensorValue(0) 
