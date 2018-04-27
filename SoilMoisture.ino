@@ -80,18 +80,22 @@ class PlantPot {
 
   const char identifier[] = "First configuration";
 
-  Sensor sensors[2] = {
-    Sensor(A0, Sensor::Analog, "m", true),
+  Sensor sensors[4] = {
+    Sensor(A0, Sensor::Analog, "m", true), // Soil moisture
+    Sensor(A1, Sensor::Analog, "l", true), // Light
+    Sensor(A2, Sensor::Analog, "t", true), // Temperature
     // This is weird, because there is likely to be only 1 in every pot. But
     // Let's keep it simple for now.
-    Sensor(5, Sensor::Digital, "?", true),
+    Sensor(5, Sensor::Digital, "?", false),
   };
 
   public:
 
   enum Sensors {
     MoistureSensor = 0,
-    WateringButton = 1,
+    LightSensor = 1,
+    TemperatureSensor = 2,
+    WateringButton = 3,
   };
 
   String serialize() {
