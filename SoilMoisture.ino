@@ -58,6 +58,8 @@ class Sensor {
 
 class PlantPot {
 
+  const char identifier[] = "First configuration";
+
   Sensor sensors[1] = {
     Sensor(A0, "m")
   };
@@ -96,6 +98,10 @@ class PlantPot {
 
   int getValue(Sensors sensor) {
     return sensors[sensor].getValue();
+  }
+
+  const char* getIdentifier() {
+    return this->identifier;
   }
 
 } plantPot;
