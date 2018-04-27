@@ -3,11 +3,108 @@
 #include <SoftwareSerial.h>
 
 
+class Sensor {
+  const int sensorPin;
+  const char serialName;
+
+  int sensorValue;
+
+  public:
+  Sensor(int pin, char serialName):
+    sensorPin(pin),
+    serialName(serialName),
+    sensorValue(0) 
+  {}
+
+  void init() {
+    pinMode(this->sensorPin, INPUT);
+  }
+
+  int update() {
+    this->sensorValue = analogRead(this->sensorPin);
+    return this->sensorValue;
+  }
+
+  int getValue() {
+    return this->sensorValue;
+  }
+
+  String serialize() {
+    return String(this->serialName) + String(this->sensorValue);
+  }
+};
+
+/**
+ * Some notes:
+ *
+ * There should be only sensor configuration, and then logic how to decide
+ * when to water. It could be some sort of easy classifier (decision tree, logistic 
+ * regression, or even neural net).
+ *
+ * On other hand, sensor configuration is fixed per device, so code might be 
+ * generated (or manually written). But each configuration should be representable
+ * as some canonical item, and configurations with same representation (i.e. types of 
+ * sensors with same meaning, but ignoring pins, which are implementation details)
+ * should be able to use same models.
+ * 
+ * Additionally, configuration should be pot-dependent. And 1 device should be able to 
+ * handle multiple pots. What is pot? Pot should contains some sensors, button for
+ * watering. Pots should not depend in each other, but can contain multiple stuff.
+ * Pot is basically unit that you water at the same time.
+ *
+ * Also, sensors should be separate class.
+ */
+
+class PlantPot {
+
+  Sensor sensors[1] = {
+    Sensor(A0, "m")
+  };
+
+  public:
+
+  enum Sensors {
+    MoistureSensor = 0,
+  };
+
+  String serialize() {
+    String ret = "";
+    bool first = true;
+    for(auto &s: this->sensors) {
+      if (first) {
+        first = false;
+      } else {
+        ret += ",";
+      }
+      ret += s.serialize();
+    }
+    return ret;
+  }
+
+  void update() {
+    for(auto &s: this->sensors) {
+      s.update();
+    }
+  }
+
+  void init() {
+    for(auto &s: this->sensors) {
+      s.init();
+    }
+  }
+
+  int getValue(Sensors sensor) {
+    return sensors[sensor].getValue();
+  }
+
+} plantPot;
+
+
+
 /*
  * Constant / configuration.
  */
 
-const int moistureSensorPin = A0;   
 const int motorPin = 9;
 const int sleepSwitchPin = 2;
 
@@ -24,12 +121,10 @@ SoftwareSerial wifiSerial(7, 8);
  */
 
 
-int moistureSensorValue = 0; 
-
 enum MoistureState {
   HighMoisture = 0,
   NormalMoisture = 1,
-  LowMoisture = 2
+  LowMoisture = 2,
 };
 
 /*
@@ -38,7 +133,7 @@ enum MoistureState {
 
 enum WateringState {
   Watering = 0,
-  NotWatering = 1
+  NotWatering = 1,
 };
 
 typedef struct {
@@ -50,14 +145,10 @@ State state;
 unsigned long last_display_time = 0;
 
 /*
- *
- */
-
-/*
  * Read sensors and decide on the moisture state.
  */
 void updateMoisture(MoistureState &moisture) {
-  moistureSensorValue = analogRead(moistureSensorPin);
+  auto moistureSensorValue = plantPot.getValue(PlantPot::MoistureSensor);
   if (moistureSensorValue >= 450) {
     moisture = LowMoisture;
   } else if (moistureSensorValue >= 350) {
@@ -143,8 +234,9 @@ void setup() {
   state.moisture = HighMoisture;
   state.watering = NotWatering;
   pinMode(motorPin, OUTPUT);
-  pinMode(moistureSensorPin, INPUT);
   pinMode(sleepSwitchPin, OUTPUT);
+
+  plantPot.init();
 
   // Initialize connection to serial wifi.
   wifiSerial.begin(9600);
@@ -153,6 +245,7 @@ void setup() {
 
 void loop() {
   maybeWaitForNextPeriod(state.watering);
+  plantPot.update();
   updateMoisture(state.moisture);
   updateWatering(state);
   maybePerformWatering(state.watering);
