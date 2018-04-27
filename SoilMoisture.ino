@@ -193,8 +193,8 @@ unsigned long last_display_time = 0;
 /*
  * Read sensors and decide on the moisture state.
  */
-void updateMoisture(MoistureState &moisture) {
-  auto moistureSensorValue = plantPot.getValue(PlantPot::MoistureSensor);
+void updateMoisture(const PlantPot &pot, MoistureState &moisture) {
+  auto moistureSensorValue = pot.getValue(PlantPot::MoistureSensor);
   if (moistureSensorValue >= 650) {
     moisture = LowMoisture;
   } else if (moistureSensorValue >= 450) {
@@ -207,8 +207,8 @@ void updateMoisture(MoistureState &moisture) {
 /*
  * Decide whether to water this cycle or not.
  */
-void updateWatering(State &state) {
-  auto manualWatering = plantPot.getValue(PlantPot::WateringButton);
+void updateWatering(const PlantPot &pot, State &state) {
+  auto manualWatering = pot.getValue(PlantPot::WateringButton);
   if (manualWatering) {
     state.watering.wateringState = Watering;
     state.watering.wateringCount += 1;
@@ -323,8 +323,8 @@ void loop() {
   maybeWaitForNextPeriod(state.watering);
   plantPot.update();
   State previousState = state;
-  updateMoisture(state.moisture);
-  updateWatering(state);
+  updateMoisture(plantPot, state.moisture);
+  updateWatering(plantPot, state);
 
   stateChangeHooks(previousState, state, plantPot);
 
