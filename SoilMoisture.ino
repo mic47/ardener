@@ -206,7 +206,7 @@ MoistureState classifyMoisture(const PlantPot &pot) {
 /*
  * Decide whether to water this cycle or not.
  */
-void updateWatering(const PlantPot &pot, State &state) {
+void updateWateringState(const PlantPot &pot, State &state) {
   auto manualWatering = pot.getValue(PlantPot::WateringButton);
   auto moisture = classifyMoisture(pot);
   if (manualWatering) {
@@ -318,7 +318,7 @@ void loop() {
   maybeWaitForNextPeriod(state.watering);
   plantPot.update();
   State previousState = state;
-  updateWatering(plantPot, state);
+  updateWateringState(plantPot, state);
 
   stateChangeHooks(previousState, state, plantPot);
 
