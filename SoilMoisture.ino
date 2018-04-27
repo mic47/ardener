@@ -14,7 +14,7 @@ class Sensor {
   Sensor(int pin, const char* serialName):
     sensorPin(pin),
     serialName(serialName),
-    sensorValue(0) 
+    sensorValue(0)
   {}
 
   void init() {
@@ -39,16 +39,16 @@ class Sensor {
  * Some notes:
  *
  * There should be only sensor configuration, and then logic how to decide
- * when to water. It could be some sort of easy classifier (decision tree, logistic 
+ * when to water. It could be some sort of easy classifier (decision tree, logistic
  * regression, or even neural net).
  *
- * On other hand, sensor configuration is fixed per device, so code might be 
+ * On other hand, sensor configuration is fixed per device, so code might be
  * generated (or manually written). But each configuration should be representable
- * as some canonical item, and configurations with same representation (i.e. types of 
+ * as some canonical item, and configurations with same representation (i.e. types of
  * sensors with same meaning, but ignoring pins, which are implementation details)
  * should be able to use same models.
- * 
- * Additionally, configuration should be pot-dependent. And 1 device should be able to 
+ *
+ * Additionally, configuration should be pot-dependent. And 1 device should be able to
  * handle multiple pots. What is pot? Pot should contains some sensors, button for
  * watering. Pots should not depend in each other, but can contain multiple stuff.
  * Pot is basically unit that you water at the same time.
@@ -118,13 +118,13 @@ const int sleepSwitchPin = 2;
 const int motorInterval = 200;
 const int motorBreakInterval = 800;
 
-const int sleepIntervalSeconds = 11; 
+const int sleepIntervalSeconds = 11;
 const int warmupIntervalSeconds = 10;
 
 SoftwareSerial wifiSerial(3, 4);
 SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, -1, Serial);
 
-/* 
+/*
  *  Moisture state
  */
 
@@ -237,8 +237,8 @@ void maybeWaitForNextPeriod(const WateringState &watering) {
       Serial.println("WarmingUp");
       switchSensors(HIGH);
       longDelayInSeconds(warmupIntervalSeconds, "warmup");
-      // Now the sensor readings are good, we can proceed.  
-      break; 
+      // Now the sensor readings are good, we can proceed.
+      break;
     case Watering:
       // If we are watering, we should not wait.
       break;
@@ -276,7 +276,7 @@ void loop() {
   State previousState = state;
   updateMoisture(state.moisture);
   updateWatering(state);
-  
+
   stateChangeHooks(previousState, state, plantPot);
 
   maybePerformWatering(state.watering);
