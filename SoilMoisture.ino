@@ -3,6 +3,11 @@
 #include <SerialESP8266wifi.h>
 #include <SoftwareSerial.h>
 
+const int motorInterval = 200;
+const int motorBreakInterval = 800;
+
+const int sleepIntervalSeconds = 11;
+const int warmupIntervalSeconds = 10;
 
 class Sensor {
   public:
@@ -80,22 +85,41 @@ class PlantPot {
 
   const char identifier[] = "First configuration";
 
-  Sensor sensors[4] = {
+  Sensor sensors[3] = {
     Sensor(A0, Sensor::Analog, "m", true), // Soil moisture
     Sensor(A1, Sensor::Analog, "l", true), // Light
     Sensor(A2, Sensor::Analog, "t", true), // Temperature
-    // This is weird, because there is likely to be only 1 in every pot. But
-    // Let's keep it simple for now.
-    Sensor(5, Sensor::Digital, "?", false),
   };
 
+  int wateringButtonPin = 5;
+  int sleepSwitchPin = 2;
+  int motorPin = 9;
+
   public:
+
+  bool wateringButtonIsPressed() {
+    return digitalRead(this->wateringButtonPin) == HIGH;
+  }
+
+  void turnSensorsOff() {
+    digitalWrite(this->sleepSwitchPin, LOW);
+  }
+
+  void turnSensorsOn() {
+    digitalWrite(this->sleepSwitchPin, HIGH);
+  }
+
+  void performWatering() {
+    digitalWrite(this->motorPin, HIGH);
+    delay(motorInterval);
+    digitalWrite(this->motorPin, LOW);
+    delay(motorBreakInterval);
+  }
 
   enum Sensors {
     MoistureSensor = 0,
     LightSensor = 1,
     TemperatureSensor = 2,
-    WateringButton = 3,
   };
 
   String serialize() {
@@ -125,6 +149,9 @@ class PlantPot {
     for(auto &s: this->sensors) {
       s.init();
     }
+    pinMode(this->wateringButtonPin, INPUT);
+    pinMode(this->sleepSwitchPin, OUTPUT);
+    pinMode(this->motorPin, OUTPUT);
   }
 
   int getValue(Sensors sensor) {
@@ -135,22 +162,11 @@ class PlantPot {
     return this->identifier;
   }
 
-} plantPot;
-
-
+};
 
 /*
- * Constant / configuration.
+ * Communication tools.
  */
-
-const int motorPin = 9;
-const int sleepSwitchPin = 2;
-
-const int motorInterval = 200;
-const int motorBreakInterval = 800;
-
-const int sleepIntervalSeconds = 11;
-const int warmupIntervalSeconds = 10;
 
 SoftwareSerial wifiSerial(3, 4);
 SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, -1, Serial);
@@ -167,31 +183,147 @@ enum MoistureState {
 };
 
 /*
- * Watering state
+ * State management.
  */
 
-enum WateringStateEnum {
-  Watering = 0,
-  NotWatering = 1,
+
+enum State {
+  Sleeping = 0,
+  SensorWarmup = 1,
+  Measuring = 2,
+  AutomatedWatering = 3,
+  ManualWatering = 4,
 };
 
-enum WateringSourceEnum {
-  AutomatedWatering = 0,
-  ManualWatering = 1,
-};
-
-struct WateringState {
-  int wateringCount;
-  WateringStateEnum wateringState;
-  WateringSourceEnum wateringSource;
-};
 
 typedef struct {
-  WateringState watering;
-} State;
+  // Does not make sense outside of ManualWatering or AutomatedWatering.
+  int wateringCycles;
+  // If in Sleeping mode, then it's time when device went to sleep,
+  // otherwise it's when device "woke up".
+  unsigned int timeSinceSleepChange;
+} StateStats;
 
+// This could be in one struct, and then in array, in case arduino would
+// control more than 1 pot.
 State state;
-unsigned long last_display_time = 0;
+StateStats stats;
+PlantPot plantPot;
+
+/*
+ * Perform the core action that is done in each state.
+ */
+void performStateAction(
+  PlantPot &pot,
+  const State &state,
+  StateStats &stats
+) {
+  switch (state) {
+    case Sleeping:
+      // Do nothing
+      break;
+    case SensorWarmup:
+      // Do nothing
+      break;
+    case Measuring:
+      // Read measurements and cache results.
+      pot.update();
+      break;
+    case AutomatedWatering:
+    case ManualWatering:
+      pot.performWatering();
+      stats.wateringCycles += 1;
+      break;
+    default:
+      Serial.println("Unknown state. This should never happen.");
+      // TODO: this should also send error to wifi?
+      break;
+  }
+}
+
+/*
+ * Move to different transition.
+ */
+State decideOnStateTransition(
+  const PlantPot &pot,
+  const State state,
+  const StateStats stats
+) {
+  if (pot.wateringButtonIsPressed()) {
+    return ManualWatering;
+  }
+  switch (state) {
+    case Sleeping:
+      if(elapsedSeconds(stats.timeSinceSleepChange, sleepIntervalSeconds)) {
+        return Measuring;
+      }
+      break;
+    case SensorWarmup:
+      if (elapsedSeconds(stats.timeSinceSleepChange, warmupIntervalSeconds)) {
+        return Measuring;
+      }
+      break;
+    case Measuring:
+    case AutomatedWatering: {
+      auto moisture = classifyMoisture(pot);
+      bool shouldWater =
+        moisture == LowMoisture ||
+        (moisture == NormalMoisture && state == AutomatedWatering);
+      if (shouldWater) {
+        return AutomatedWatering;
+      } else if (state == Measuring) {
+        // Go and sleep;
+        return Sleeping;
+      } else {
+        // Measure once more time after watering.
+        // TODO: would be nice to have delay to let water disperse everywhere.
+        return Measuring;
+      }
+      break;
+    }
+    case ManualWatering:
+      if (!pot.wateringButtonIsPressed()) {
+        return SensorWarmup;
+      }
+      break;
+    default:
+      Serial.println("Unknown state. This should never happen.");
+      // TODO: this should also send error to wifi?
+      break;
+  }
+  return state;
+}
+
+void stateChangeTriggers(
+  PlantPot &pot,
+  const State &prev,
+  const State &cur,
+  StateStats &stats
+) {
+  if (prev == cur) {
+    // Skip if there is no state change (currently there is not useful logic here.
+    return;
+  }
+  // From now on, I assume prev.state != cur.state
+  if (prev == Sleeping) {
+    pot.turnSensorsOn();
+    stats.timeSinceSleepChange = millis();
+  }
+  if (cur == Sleeping) {
+    pot.turnSensorsOff();
+    stats.timeSinceSleepChange = millis();
+  }
+  if (prev == Measuring) {
+    // TODO: add failover
+    sendMeasurements(pot);
+  }
+  if (prev == AutomatedWatering || prev == ManualWatering) {
+    sendWateringAction(pot, prev, stats);
+    // TODO: Maybe I could reset this when moving from non-watering state to
+    // watering state.
+    stats.wateringCycles = 0;
+  }
+}
 
 /*
  * Decide on moisture state.
@@ -207,104 +339,12 @@ MoistureState classifyMoisture(const PlantPot &pot) {
   }
 }
 
-/*
- * Decide whether to water this cycle or not.
- */
-void updateWateringState(const PlantPot &pot, State &state) {
-  auto manualWatering = pot.getValue(PlantPot::WateringButton);
-  auto moisture = classifyMoisture(pot);
-  if (manualWatering) {
-    state.watering.wateringState = Watering;
-    state.watering.wateringCount += 1;
-    state.watering.wateringSource = ManualWatering;
-  } else {
-    switch (moisture) {
-      case LowMoisture:
-        state.watering.wateringState = Watering;
-        state.watering.wateringSource = AutomatedWatering;
-        state.watering.wateringCount += 1;
-        break;
-      case HighMoisture:
-        state.watering.wateringState = NotWatering;
-        state.watering.wateringCount = 0;
-        state.watering.wateringSource = AutomatedWatering;
-        break;
-      case NormalMoisture:
-        if (
-          state.watering.wateringState == Watering
-          && state.watering.wateringSource != ManualWatering
-        ) {
-          state.watering.wateringCount += 1;
-        } else {
-          state.watering.wateringState = NotWatering;
-          state.watering.wateringCount = 0;
-          state.watering.wateringSource = AutomatedWatering;
-        }
-        // Keep state as it is.
-        break;
-      default:
-        Serial.print("ERROR: moisture state is in unknown level!!!\n");
-        break;
-    }
-  }
-}
-
-/*
- * Do watering if necessary.
- */
-void maybePerformWatering(const WateringState &watering) {
-  switch (watering.wateringState)  {
-      case Watering:
-        digitalWrite(motorPin, HIGH);
-        delay(motorInterval);
-        digitalWrite(motorPin, LOW);
-        delay(motorBreakInterval);
-        break;
-      case NotWatering:
-        digitalWrite(motorPin, LOW);
-        break;
-      default:
-        // Serial.print("ERROR: unknown watering state. This should never happen!!!\n");
-        break;
-  }
-}
-
-/*
- * In case we are done with current measurement, turn off sensors and wait predefined
- * period. After that, turn-on sensors, wait warmup period. Do nothing if we are watering.
- */
-bool canSleep = false;
-void maybeWaitForNextPeriod(const WateringState &watering) {
-  switch (watering.wateringState) {
-    case NotWatering:
-      // Turn off sensitive sensors.
-      if (canSleep) {
-        switchSensors(LOW);
-        longDelayInSeconds(sleepIntervalSeconds, "sleeping");
-      } else {
-        canSleep = true;
-      }
-      // Turn them on, and wait until they initialize properly.
-      switchSensors(HIGH);
-      longDelayInSeconds(warmupIntervalSeconds, "warmup");
-      // Now the sensor readings are good, we can proceed.
-      break;
-    case Watering:
-      // If we are watering, we should not wait.
-      break;
-    default:
-      // Serial.print("ERROR: unknown watering state. This should never happen!!!\n");
-      break;
-  }
-}
-
 void setup() {
   // Start debugging serial mode.
   Serial.begin(9600);
-  state.watering.wateringState = NotWatering;
-  state.watering.wateringCount = 0;
-  pinMode(motorPin, OUTPUT);
-  pinMode(sleepSwitchPin, OUTPUT);
+  state = SensorWarmup;
+  stats.timeSinceSleepChange = millis();
+  stats.wateringCycles = 0;
 
   plantPot.init();
 
@@ -317,29 +357,22 @@ void setup() {
   }
 }
 
-
 void loop() {
-  maybeWaitForNextPeriod(state.watering);
-  plantPot.update();
-  State previousState = state;
-  updateWateringState(plantPot, state);
-
-  stateChangeHooks(previousState, state, plantPot);
-
-  maybePerformWatering(state.watering);
-  sendMeasurements(plantPot);
+  performStateAction(plantPot, state, stats);
+  State newState = decideOnStateTransition(plantPot, state, stats);
+  stateChangeTriggers(plantPot, state, newState, stats);
+  state = newState;
 }
 
-void stateChangeHooks(const State &prev, const State &cur, const PlantPot &pot) {
-  if (
-    prev.watering.wateringState == Watering
-    && cur.watering.wateringState == NotWatering
-  ) {
-      sendWateringAction(pot, prev.watering);
-  }
-}
+/*
+ * Tools for doing networking and debugging.
+ */
 
-void sendWateringAction(const PlantPot &pot, WateringState watering) {
+void sendWateringAction(
+  const PlantPot &pot,
+  const State watering,
+  const StateStats &stats
+) {
   bool ok = wifi.connectToServer("192.168.0.47", 2347);
   if (!ok) {
     Serial.println("ActionSend: Connecting to server failed.");
@@ -355,10 +388,10 @@ void sendWateringAction(const PlantPot &pot, WateringState watering) {
   char buf[32];
   sprintf(
     buf, "a %s %d",
-    watering.wateringSource == AutomatedWatering
+    watering == AutomatedWatering
       ? "AutomatedWatering"
       : "ManualWatering",
-    watering.wateringCount
+    stats.wateringCycles
   );
   ok = wifi.send(SERVER, buf, true);
   wifi.disconnectFromServer();
@@ -388,14 +421,6 @@ bool sendMeasurements(PlantPot &pot) {
   return true;
 }
 
-// Tools
-
-void switchSensors(int output) {
-  digitalWrite(sleepSwitchPin, output);
-}
-
-void longDelayInSeconds(int seconds, const char *msg) {
-  for(int i=seconds ; i > 0; i--) {
-    delay(1000);
-  }
+bool elapsedSeconds(unsigned int since, unsigned int seconds) {
+  return millis() - since >= seconds * 1000;
 }
