@@ -6,7 +6,7 @@
 const int motorInterval = 200;
 const int motorBreakInterval = 800;
 
-const int sleepIntervalSeconds = 11;
+const int sleepIntervalSeconds = 15 * 60;
 const int warmupIntervalSeconds = 10;
 
 class Sensor {
@@ -85,15 +85,16 @@ class PlantPot {
 
   const char identifier[] = "First configuration";
 
-  Sensor sensors[3] = {
+  Sensor sensors[4] = {
     Sensor(A0, Sensor::Analog, "m", true), // Soil moisture
     Sensor(A1, Sensor::Analog, "l", true), // Light
     Sensor(A2, Sensor::Analog, "t", true), // Temperature
+    Sensor(A3, Sensor::Analog, "n", true), // Soil moisture
   };
 
-  int wateringButtonPin = 5;
-  int sleepSwitchPin = 2;
-  int motorPin = 9;
+  int wateringButtonPin = 11;
+  int sleepSwitchPin = 12;
+  int motorPin = 13;
 
   public:
 
@@ -120,6 +121,7 @@ class PlantPot {
     MoistureSensor = 0,
     LightSensor = 1,
     TemperatureSensor = 2,
+    MoistureSensor2 = 3,
   };
 
   String serialize() {
@@ -168,7 +170,7 @@ class PlantPot {
  * Communication tools.
  */
 
-SoftwareSerial wifiSerial(3, 4);
+SoftwareSerial wifiSerial(2, 3);
 SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, -1, Serial);
 
 /*
@@ -330,6 +332,8 @@ void stateChangeTriggers(
  */
 MoistureState classifyMoisture(const PlantPot &pot) {
   auto moistureSensorValue = pot.getValue(PlantPot::MoistureSensor);
+  moistureSensorValue += pot.getValue(PlantPot::MoistureSensor2);
+  moistureSensorValue /= 2;
   if (moistureSensorValue >= 650) {
     return LowMoisture;
   } else if (moistureSensorValue >= 450) {
