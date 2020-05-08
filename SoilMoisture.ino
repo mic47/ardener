@@ -178,7 +178,7 @@ class PlantPot {
  */
 
 SoftwareSerial wifiSerial(2, 3);
-SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, NO_RESET, Serial);
+SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, NO_RESET); //, Serial); // Uncomment this for debug
 
 /*
  *  Moisture state
@@ -287,7 +287,7 @@ State decideOnStateTransition(
   switch (state) {
     case Sleeping:
       if(elapsedSeconds(stats.timeSinceSleepChange, sleepIntervalSeconds)) {
-        return Measuring;
+        return SensorWarmup;
       }
       break;
     case SensorWarmup:
@@ -350,7 +350,7 @@ State decideOnStateTransition(
 })
 
 void printTime() {
-  unsigned int time = millis();
+  unsigned long time = millis();
   Serial.print("[time=");
   Serial.print(time/1000);
   Serial.print(".");
