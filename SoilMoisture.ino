@@ -3,6 +3,8 @@
 #include <SerialESP8266wifi.h>
 #include <SoftwareSerial.h>
 
+const int RETRIES = 1;
+
 const int motorInterval = 200;
 const int motorBreakInterval = 800;
 
@@ -47,15 +49,15 @@ class Sensor {
     return this->sensorValue;
   }
 
-  int getValue() {
+  int getValue() const {
     return this->sensorValue;
   }
 
-  String serialize() {
+  String serialize() const {
     return String(this->serialName) + String(this->sensorValue);
   }
 
-  bool shouldSerialize() {
+  bool shouldSerialize() const {
     return serializable;
   }
 };
@@ -81,9 +83,10 @@ class Sensor {
  * Also, sensors should be separate class.
  */
 
-class PlantPot {
+#define IDENTIFIER "Kanary0"
 
-  const char identifier[] = "First configuration";
+class PlantPot {
+  const char identifier[sizeof(IDENTIFIER)] = IDENTIFIER;
 
   Sensor sensors[4] = {
     Sensor(A0, Sensor::Analog, "m", true), // Soil moisture
@@ -98,19 +101,23 @@ class PlantPot {
 
   public:
 
-  bool wateringButtonIsPressed() {
-    return digitalRead(this->wateringButtonPin) == HIGH;
+  bool wateringButtonIsPressed() const {
+    bool output = digitalRead(this->wateringButtonPin) == HIGH;
+    if (output) {
+      Serial.println("Watering button is pressed");
+    }
+    return output;
   }
 
-  void turnSensorsOff() {
+  void turnSensorsOff() const {
     digitalWrite(this->sleepSwitchPin, LOW);
   }
 
-  void turnSensorsOn() {
+  void turnSensorsOn() const {
     digitalWrite(this->sleepSwitchPin, HIGH);
   }
 
-  void performWatering() {
+  void performWatering() const {
     digitalWrite(this->motorPin, HIGH);
     delay(motorInterval);
     digitalWrite(this->motorPin, LOW);
@@ -156,11 +163,11 @@ class PlantPot {
     pinMode(this->motorPin, OUTPUT);
   }
 
-  int getValue(Sensors sensor) {
+  int getValue(Sensors sensor) const {
     return sensors[sensor].getValue();
   }
 
-  const char* getIdentifier() {
+  const char* getIdentifier() const {
     return this->identifier;
   }
 
@@ -171,7 +178,7 @@ class PlantPot {
  */
 
 SoftwareSerial wifiSerial(2, 3);
-SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, -1, Serial);
+SerialESP8266wifi wifi = SerialESP8266wifi(wifiSerial, wifiSerial, NO_RESET, Serial);
 
 /*
  *  Moisture state
@@ -211,6 +218,19 @@ typedef struct {
 State state;
 StateStats stats;
 PlantPot plantPot;
+
+const char* ppState(const State &state) {
+  const char* ret = NULL;
+  switch (state) {
+    case Sleeping: ret = "Sleeping"; break;
+    case SensorWarmup: ret =  "SensorWarmup"; break;
+    case Measuring: ret =  "Measuring"; break;
+    case AutomatedWatering: ret =  "AutomatedWatering"; break;
+    case ManualWatering: ret =  "ManualWatering"; break;
+    default: ret =  "ERROR_STATE"; break;
+  }
+  return ret;
+};
 
 /*
  * Perform the core action that is done in each state.
@@ -296,6 +316,37 @@ State decideOnStateTransition(
   return state;
 }
 
+#define RETRY_WIFI(fun, retries) ({ \
+  bool ok = (fun); \
+  for (int i = 0; i < (retries) && !ok ; i++) {\
+    Serial.println("ERROR found. Resetting wifi.");\
+    wifi.begin();\
+    ok = (fun);\
+  }\
+  if (!ok) {\
+    Serial.println("UNABLE to do wifi action");\
+  }\
+  ok;\
+})
+
+#define WIFI_ACTION(action) ({\
+  bool ok = connectToServer();\
+  delay(10);\
+  if (ok) {\
+    ok &= (action);\
+  }\
+  disconnectFromServer();\
+  ok;\
+})
+
+void printTime() {
+  Serial.print("[time=");
+  Serial.print(millis()/1000);
+  Serial.print(".");
+  Serial.print(millis()%1000);
+  Serial.print("] ");
+}
+
 void stateChangeTriggers(
   PlantPot &pot,
   const State &prev,
@@ -306,6 +357,12 @@ void stateChangeTriggers(
     // Skip if there is no state change (currently there is not useful logic here.
     return;
   }
+  printTime();
+  Serial.print("STATE CHANGE: ");
+  Serial.print(ppState(prev));
+  Serial.print(" ");
+  Serial.println(ppState(cur));
+  
   // From now on, I assume prev.state != cur.state
   if (prev == Sleeping) {
     pot.turnSensorsOn();
@@ -316,15 +373,17 @@ void stateChangeTriggers(
     stats.timeSinceSleepChange = millis();
   }
   if (prev == Measuring) {
-    // TODO: add failover
-    sendMeasurements(pot);
+    RETRY_WIFI(WIFI_ACTION(sendMeasurements(pot)), RETRIES);
   }
   if (prev == AutomatedWatering || prev == ManualWatering) {
-    sendWateringAction(pot, prev, stats);
+    RETRY_WIFI(WIFI_ACTION(sendWateringAction(pot, prev, stats)), RETRIES);
     // TODO: Maybe I could reset this when moving from non-watering state to
     // watering state.
     stats.wateringCycles = 0;
   }
+
+  printTime();
+  Serial.println("STATE CHANGE TRIGGERS DONE");
 }
 
 /*
@@ -354,6 +413,7 @@ void setup() {
 
   wifiSerial.begin(9600);
   // Initialize connection to serial wifi.
+  Serial.println("Initializing wifi");
   if(wifi.begin()) {
     Serial.println("Wifi is initialized");
   } else {
@@ -369,26 +429,25 @@ void loop() {
 }
 
 /*
- * Tools for doing networking and debugging.
+ * Sending messages over network.
  */
+bool sendIdentifier(const PlantPot &pot) {
+  bool ok = wifi.send(SERVER, "i ", false);
+  ok &= wifi.send(SERVER, pot.getIdentifier(), true);
+  if (!ok) {
+    Serial.println("Identifier message failed to send.");
+    return false;
+  }
+  return ok;
+}
 
-void sendWateringAction(
+bool sendWateringAction(
   const PlantPot &pot,
   const State watering,
   const StateStats &stats
 ) {
-  bool ok = wifi.connectToServer("192.168.0.47", 2347);
-  if (!ok) {
-    Serial.println("ActionSend: Connecting to server failed.");
-    return;
-  }
-
-  ok = wifi.send(SERVER, "i ", false);
-  ok &= wifi.send(SERVER, pot.getIdentifier(), true);
-  if (!ok) {
-    Serial.println("ActionSend: Identifier message failed to send.");
-    return;
-  }
+  bool ok = sendIdentifier(pot);
+  if (!ok) return false;
   char buf[32];
   sprintf(
     buf, "a %s %d",
@@ -398,22 +457,15 @@ void sendWateringAction(
     stats.wateringCycles
   );
   ok = wifi.send(SERVER, buf, true);
-  wifi.disconnectFromServer();
+  if (!ok) {
+    Serial.println("Error while sending watering action to server.");
+  }
+  return ok;
 }
 
 bool sendMeasurements(PlantPot &pot) {
-  bool ok = wifi.connectToServer("192.168.0.47", "2347");
-  if (!ok) {
-    Serial.println("Connecting to server failed.");
-    return;
-  }
-
-  ok = wifi.send(SERVER, "i ", false);
-  ok &= wifi.send(SERVER, pot.getIdentifier(), true);
-  if (!ok) {
-    Serial.println("Identifier message failed to send.");
-    return false;
-  }
+  bool ok = sendIdentifier(pot);
+  if (!ok) return false;
   ok = wifi.send(SERVER, "m ", false);
   ok &= wifi.send(SERVER, pot.serialize().c_str(), true);
   //ok &= wifi.send(SERVER, "\n", true);
@@ -421,8 +473,27 @@ bool sendMeasurements(PlantPot &pot) {
     Serial.println("Measurement message failed to be sent.");
     return false;
   }
-  wifi.disconnectFromServer();
+}
+
+/*
+ * Tools for doing networking and debugging.
+ */
+
+bool connectToServer() {
+  bool ok = wifi.connectToServer("192.168.100.14", "2347");
+  if (!ok) {
+    Serial.println("Failed to connect. Reseting wifi.");
+    wifi.begin();
+    if (!wifi.connectToServer("192.168.100.14", "2347")) {
+      Serial.println("Connecting to server failed again.");
+      return false;
+    }
+  }
   return true;
+}
+
+bool disconnectFromServer() {
+  wifi.disconnectFromServer();
 }
 
 bool elapsedSeconds(unsigned int since, unsigned int seconds) {
