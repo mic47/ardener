@@ -210,7 +210,7 @@ typedef struct {
   int wateringCycles;
   // If in Sleeping mode, then it's time when device went to sleep,
   // otherwise it's when device "woke up".
-  unsigned int timeSinceSleepChange;
+  unsigned long timeSinceSleepChange;
 } StateStats;
 
 // This could be in one struct, and then in array, in case arduino would
@@ -231,6 +231,16 @@ const char* ppState(const State &state) {
   }
   return ret;
 };
+
+void printStateStats(const StateStats &stats) {
+  Serial.print("[wateringCycles=");
+  Serial.print(stats.wateringCycles);
+  Serial.print(", timeSinceSleepChange=");
+  Serial.print(stats.timeSinceSleepChange/1000);
+  Serial.print(".");
+  Serial.print(stats.timeSinceSleepChange%1000);
+  Serial.print("] ");
+}
 
 /*
  * Perform the core action that is done in each state.
@@ -340,10 +350,11 @@ State decideOnStateTransition(
 })
 
 void printTime() {
+  unsigned int time = millis();
   Serial.print("[time=");
-  Serial.print(millis()/1000);
+  Serial.print(time/1000);
   Serial.print(".");
-  Serial.print(millis()%1000);
+  Serial.print(time%1000);
   Serial.print("] ");
 }
 
@@ -358,6 +369,7 @@ void stateChangeTriggers(
     return;
   }
   printTime();
+  printStateStats(stats);
   Serial.print("STATE CHANGE: ");
   Serial.print(ppState(prev));
   Serial.print(" ");
@@ -383,6 +395,7 @@ void stateChangeTriggers(
   }
 
   printTime();
+  printStateStats(stats);
   Serial.println("STATE CHANGE TRIGGERS DONE");
 }
 
@@ -405,12 +418,6 @@ MoistureState classifyMoisture(const PlantPot &pot) {
 void setup() {
   // Start debugging serial mode.
   Serial.begin(9600);
-  state = SensorWarmup;
-  stats.timeSinceSleepChange = millis();
-  stats.wateringCycles = 0;
-
-  plantPot.init();
-
   wifiSerial.begin(9600);
   // Initialize connection to serial wifi.
   Serial.println("Initializing wifi");
@@ -419,6 +426,14 @@ void setup() {
   } else {
     Serial.println("Wifi failed to initialize");
   }
+
+  // Initialize resto fo the system.
+  state = SensorWarmup;
+  stats.timeSinceSleepChange = millis();
+  stats.wateringCycles = 0;
+
+  plantPot.init();
+
 }
 
 void loop() {
@@ -496,6 +511,7 @@ bool disconnectFromServer() {
   wifi.disconnectFromServer();
 }
 
-bool elapsedSeconds(unsigned int since, unsigned int seconds) {
-  return millis() - since >= seconds * 1000;
+bool elapsedSeconds(unsigned long since, unsigned long seconds) {
+  unsigned long now = millis();
+  return now  - since >= seconds * 1000;
 }
